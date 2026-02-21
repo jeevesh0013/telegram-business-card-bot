@@ -8,7 +8,10 @@ from telegram.ext import (
     ConversationHandler, CallbackQueryHandler, ContextTypes, filters,
 )
 from telegram.constants import ParseMode
-import os
+
+import threading  # Used to run two things at the same time (bot + web server)
+from http.server import BaseHTTPRequestHandler, HTTPServer  # Simple built-in web server
+import os  # To read environment variables like PORT
 # ── Config ──────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -270,9 +273,41 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ Unknown command. Use /start to create a card.")
 
+# ── Dummy Web Server For Render ────────────────────────────────────────────
+# Render Web Services require an open port.
+# Since Telegram polling bots don't open a port,
+# we create a tiny HTTP server just to satisfy Render.
+
+def run_dummy_server():
+    # Render automatically provides a PORT environment variable.
+    # If not found, we default to 10000.
+    port = int(os.environ.get("PORT", 10000))
+
+    # Simple request handler
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            # When someone visits the URL, send a success response
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is running successfully!")
+
+    # Start HTTP server on 0.0.0.0 (required by Render)
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    print(f"🌐 Dummy server running on port {port}")
+    server.serve_forever()
+    
 # ── Run ──────────────────────────────────────────────────────────────────────
 def main():
+    # ── Start Dummy Web Server ─────────────────────────────────────────────
+    # This is required for Render Web Service (free tier).
+    # Render expects an open port, but Telegram polling doesn't open one.
+    # So we run a tiny HTTP server in a separate thread.
+    threading.Thread(target=run_dummy_server).start()
+
+    # ── Create Telegram Application ───────────────────────────────────────
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # ── Conversation Handler Setup ────────────────────────────────────────
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -288,9 +323,14 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+
+    # ── Add Handlers To App ───────────────────────────────────────────────
     app.add_handler(conv)
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
+
     print("✅ Bot running!")
+
+    # ── Start Polling ─────────────────────────────────────────────────────
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
