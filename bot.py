@@ -9,12 +9,12 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-import threading  # Used to run two things at the same time (bot + web server)
-from http.server import BaseHTTPRequestHandler, HTTPServer  # Simple built-in web server
-import os  # To read environment variables like PORT
-# ── Config ──────────────────────────────────────────────────────────────────
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 
+# ── Config ───────────────────────────────────────────────────────────────────
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FIRST, LAST, PHONE, EMAIL, ORG, TITLE, LOGO, THEME, CONFIRM = range(9)
 
@@ -27,7 +27,7 @@ THEMES = {
     "rose":     {"label": "🌸 Rose",     "bg": [(70,15,35),(155,40,80)],  "accent": (255,140,170),"text": (255,255,255)},
 }
 
-# ── Validators ───────────────────────────────────────────────────────────────
+# ── Validators ────────────────────────────────────────────────────────────────
 def valid_name(s):  return bool(re.fullmatch(r"[A-Za-z ]{2,40}", s.strip()))
 def valid_phone(s):
     s = s.replace(" ","").replace("-","")
@@ -37,7 +37,7 @@ def fmt_phone(s):
     s = s.replace(" ","").replace("-","")
     return s if s.startswith("+91") else "+91"+s
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def theme_keyboard():
     keys = list(THEMES.items())
     rows = [[InlineKeyboardButton(v["label"], callback_data=f"theme_{k}") for k,v in keys[i:i+2]]
@@ -60,7 +60,17 @@ def draw_text_fit(draw, xy, text, max_width, start_size, color):
         size -= 3
     draw.text(xy, text, font=load_font(size), fill=color)
 
-# ── Card Generation ──────────────────────────────────────────────────────────
+def get_logo_image(logo_bytes):
+    """
+    Safely open a logo from raw bytes (not a BytesIO seekable stream).
+    Returns a PIL Image in RGBA mode, or None if logo_bytes is None.
+    """
+    if not logo_bytes:
+        return None
+    # logo_bytes is stored as raw bytes; wrap fresh every time
+    return Image.open(BytesIO(logo_bytes)).convert("RGBA")
+
+# ── Card Generation ───────────────────────────────────────────────────────────
 def make_card(data):
     W, H = 1200, 660
     theme = THEMES[data.get("theme", "ocean")]
@@ -87,7 +97,7 @@ def make_card(data):
         "BEGIN:VCARD","VERSION:3.0",
         f"N:{data['last']};{data['first']};;;",
         f"FN:{data['first']} {data['last']}",
-        f"ORG:{data['org']}"   if data.get("org")   else "",
+        f"ORG:{data['org']}"     if data.get("org")   else "",
         f"TITLE:{data['title']}" if data.get("title") else "",
         f"TEL;TYPE=CELL:{data['phone']}",
         f"EMAIL:{data['email']}",
@@ -102,42 +112,42 @@ def make_card(data):
     QR = 400
     qr_img = qr_img.resize((QR, QR), Image.LANCZOS)
 
-    # Logo inside QR
-    if data.get("logo"):
-        data["logo"].seek(0)
-        lg = Image.open(data["logo"]).convert("RGBA")
+    # ── Embed logo inside QR center ──────────────────────────
+    logo_pil = get_logo_image(data.get("logo_bytes"))
+    if logo_pil:
         ls = int(QR * 0.22)
-        lg = ImageOps.fit(lg, (ls,ls), Image.LANCZOS)
+        lg = ImageOps.fit(logo_pil, (ls, ls), Image.LANCZOS)
         bs = ls + 16
-        bg = Image.new("RGBA",(bs,bs),(255,255,255,255))
-        bm = Image.new("L",(bs,bs),0); ImageDraw.Draw(bm).ellipse((0,0,bs,bs),fill=255)
+        bg = Image.new("RGBA", (bs, bs), (255, 255, 255, 255))
+        bm = Image.new("L", (bs, bs), 0)
+        ImageDraw.Draw(bm).ellipse((0, 0, bs, bs), fill=255)
         qi = qr_img.convert("RGBA")
-        qi.paste(bg,((QR-bs)//2,(QR-bs)//2),bm)
-        lm = Image.new("L",(ls,ls),0); ImageDraw.Draw(lm).ellipse((0,0,ls,ls),fill=255)
-        qi.paste(lg,((QR-ls)//2,(QR-ls)//2),lm)
+        qi.paste(bg, ((QR-bs)//2, (QR-bs)//2), bm)
+        lm = Image.new("L", (ls, ls), 0)
+        ImageDraw.Draw(lm).ellipse((0, 0, ls, ls), fill=255)
+        qi.paste(lg, ((QR-ls)//2, (QR-ls)//2), lm)
         qr_img = qi.convert("RGB")
 
     # Paste QR with white border
     pad = 14
     qr_x, qr_y = W - QR - 65, (H - QR) // 2
-    card.paste(Image.new("RGB",(QR+pad*2,QR+pad*2),(255,255,255)), (qr_x-pad, qr_y-pad))
+    card.paste(Image.new("RGB", (QR+pad*2, QR+pad*2), (255,255,255)), (qr_x-pad, qr_y-pad))
     card.paste(qr_img, (qr_x, qr_y))
     draw.text((qr_x + QR//2, qr_y+QR+8), "Scan to Save", font=load_font(24), fill=tcol, anchor="mt")
 
-    # ── Text (left side) ────────────────────────────────────
-    LX = 60                         # left margin
-    MAX = qr_x - LX - 30           # max text width — never overlaps QR
+    # ── Text (left side) ─────────────────────────────────────
+    LX = 60
+    MAX = qr_x - LX - 30
 
     # Optional logo top-left
     tx = LX
-    if data.get("logo"):
-        data["logo"].seek(0)
-        lc = Image.open(data["logo"]).convert("RGBA")
-        lc = ImageOps.fit(lc,(120,120),Image.LANCZOS)
-        m = Image.new("L",(120,120),0); ImageDraw.Draw(m).ellipse((0,0,120,120),fill=255)
-        card.paste(lc,(LX,60),m)
+    if logo_pil:
+        lc = ImageOps.fit(logo_pil, (120, 120), Image.LANCZOS)
+        m = Image.new("L", (120, 120), 0)
+        ImageDraw.Draw(m).ellipse((0, 0, 120, 120), fill=255)
+        card.paste(lc, (LX, 60), m)
         tx = LX + 140
-        MAX -= 140                  # shrink max width so text never goes under logo area
+        MAX -= 140
 
     # Name
     draw_text_fit(draw, (tx, 65), f"{data['first']} {data['last']}", MAX, 66, tcol)
@@ -166,13 +176,50 @@ def make_card(data):
     card.save(out, "PNG"); out.seek(0)
     return out
 
-# ── Conversation ─────────────────────────────────────────────────────────────
+# ── Conversation ──────────────────────────────────────────────────────────────
+HELP_TEXT = (
+    "💼 *Business Card Bot — Help*\n\n"
+    "This bot generates a professional digital business card with a QR code "
+    "that anyone can scan to save your contact.\n\n"
+    "*Commands:*\n"
+    "• /start — Create a new business card\n"
+    "• /clear — Clear current progress & start fresh\n"
+    "• /cancel — Cancel the current session\n"
+    "• /help — Show this help message\n\n"
+    "*Steps during card creation:*\n"
+    "1️⃣ First Name\n"
+    "2️⃣ Last Name\n"
+    "3️⃣ Phone number _(Indian format: 10 digits or +91...)_\n"
+    "4️⃣ Email address\n"
+    "5️⃣ Organization _(or type `skip`)_\n"
+    "6️⃣ Job Title _(or type `skip`)_\n"
+    "7️⃣ Logo image _(send a photo, or type `skip`)_\n"
+    "8️⃣ Choose a colour theme\n"
+    "9️⃣ Confirm & generate!\n\n"
+    "*Tips:*\n"
+    "• Your logo appears both on the card and embedded in the QR code center.\n"
+    "• The QR encodes a vCard — scan it with any phone camera to save contact details.\n"
+    "• Type /clear anytime to wipe your answers and start over."
+)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
-        "💼 *Business Card Bot*\n\nType /cancel anytime.\n\n✏️ Enter your *First Name*:",
+        "💼 *Business Card Bot*\n\nType /cancel anytime to stop, or /help for guidance.\n\n"
+        "✏️ Enter your *First Name*:",
         parse_mode=ParseMode.MARKDOWN)
     return FIRST
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN)
+
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear all stored data and restart the conversation."""
+    context.user_data.clear()
+    await update.message.reply_text(
+        "🗑️ *All data cleared!*\n\nType /start to create a new card from scratch.",
+        parse_mode=ParseMode.MARKDOWN)
+    return ConversationHandler.END
 
 async def step_first(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
@@ -220,26 +267,50 @@ async def step_org(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def step_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     context.user_data["title"] = "" if t.lower() == "skip" else t
-    await update.message.reply_text("🖼 Upload your *Logo* (photo) or type `skip`:", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(
+        "🖼 Upload your *Logo* (send a photo) or type `skip`:\n\n"
+        "_Your logo will appear on the card and in the center of the QR code._",
+        parse_mode=ParseMode.MARKDOWN)
     return LOGO
 
 async def step_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ── Case 1: user typed 'skip' ──────────────────────────────────────────
     if update.message.text and update.message.text.strip().lower() == "skip":
-        context.user_data["logo"] = None
+        context.user_data["logo_bytes"] = None
+
+    # ── Case 2: user sent a photo ─────────────────────────────────────────
     elif update.message.photo:
-        f = await update.message.photo[-1].get_file()
-        bio = BytesIO(); await f.download_to_memory(bio); bio.seek(0)
-        context.user_data["logo"] = bio
+        # Download highest-quality version of the photo
+        photo_file = await update.message.photo[-1].get_file()
+        bio = BytesIO()
+        await photo_file.download_to_memory(bio)
+        # Store raw bytes so we can re-open the image as many times as needed
+        context.user_data["logo_bytes"] = bio.getvalue()
+
+    # ── Case 3: user sent a document/file image ────────────────────────────
+    elif update.message.document and update.message.document.mime_type and \
+            update.message.document.mime_type.startswith("image/"):
+        doc_file = await update.message.document.get_file()
+        bio = BytesIO()
+        await doc_file.download_to_memory(bio)
+        context.user_data["logo_bytes"] = bio.getvalue()
+
+    # ── Case 4: anything else ──────────────────────────────────────────────
     else:
-        await update.message.reply_text("❌ Please send a photo or type `skip`:", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            "❌ Please *send a photo* (tap the 📎 clip and choose Photo/Gallery) or type `skip`:",
+            parse_mode=ParseMode.MARKDOWN)
         return LOGO
-    await update.message.reply_text("🎨 Choose a *Theme*:", parse_mode=ParseMode.MARKDOWN, reply_markup=theme_keyboard())
+
+    await update.message.reply_text("🎨 Choose a *Theme*:", parse_mode=ParseMode.MARKDOWN,
+                                    reply_markup=theme_keyboard())
     return THEME
 
 async def step_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     context.user_data["theme"] = q.data.replace("theme_","")
     d = context.user_data
+    logo_status = "✅ Uploaded" if d.get("logo_bytes") else "➖ None"
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Generate!", callback_data="gen"),
         InlineKeyboardButton("🔄 Restart",  callback_data="restart"),
@@ -251,6 +322,7 @@ async def step_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🏢 {d.get('org') or '—'}\n"
         f"📱 {d['phone']}\n"
         f"📧 {d['email']}\n"
+        f"🖼 Logo: {logo_status}\n"
         f"🎨 {THEMES[d['theme']]['label']}",
         parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
     return CONFIRM
@@ -259,55 +331,52 @@ async def step_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if q.data == "restart":
         context.user_data.clear()
-        await q.edit_message_text("🔄 Restarted. Type /start to begin.")
+        await q.edit_message_text("🔄 Restarted. Type /start to begin again.")
         return ConversationHandler.END
-    await q.edit_message_text("⏳ Generating your card...")
-    card = make_card(context.user_data)
-    await q.message.reply_document(document=card, caption="🎉 Your Business Card!\n\nScan the QR to save contact.")
+    await q.edit_message_text("⏳ Generating your card, please wait...")
+    try:
+        card = make_card(context.user_data)
+        await q.message.reply_document(
+            document=card,
+            caption=(
+                "🎉 *Your Business Card is ready!*\n\n"
+                "📲 Scan the QR code to save the contact.\n"
+                "Type /start to make another card."
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception as e:
+        await q.message.reply_text(f"❌ Something went wrong while generating the card.\nError: `{e}`\n\nType /start to try again.", parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     await update.message.reply_text("❌ Cancelled. Type /start to try again.")
     return ConversationHandler.END
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ Unknown command. Use /start to create a card.")
+    await update.message.reply_text("❓ Unknown command.\n\nUse /start to create a card or /help for guidance.")
 
-# ── Dummy Web Server For Render ────────────────────────────────────────────
-# Render Web Services require an open port.
-# Since Telegram polling bots don't open a port,
-# we create a tiny HTTP server just to satisfy Render.
-
+# ── Dummy Web Server For Render ───────────────────────────────────────────────
 def run_dummy_server():
-    # Render automatically provides a PORT environment variable.
-    # If not found, we default to 10000.
     port = int(os.environ.get("PORT", 10000))
-
-    # Simple request handler
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            # When someone visits the URL, send a success response
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"Bot is running successfully!")
-
-    # Start HTTP server on 0.0.0.0 (required by Render)
+        def log_message(self, format, *args):
+            pass  # suppress server logs
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"🌐 Dummy server running on port {port}")
     server.serve_forever()
-    
-# ── Run ──────────────────────────────────────────────────────────────────────
-def main():
-    # ── Start Dummy Web Server ─────────────────────────────────────────────
-    # This is required for Render Web Service (free tier).
-    # Render expects an open port, but Telegram polling doesn't open one.
-    # So we run a tiny HTTP server in a separate thread.
-    threading.Thread(target=run_dummy_server).start()
 
-    # ── Create Telegram Application ───────────────────────────────────────
+# ── Run ───────────────────────────────────────────────────────────────────────
+def main():
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # ── Conversation Handler Setup ────────────────────────────────────────
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -317,20 +386,28 @@ def main():
             EMAIL:   [MessageHandler(filters.TEXT & ~filters.COMMAND, step_email)],
             ORG:     [MessageHandler(filters.TEXT & ~filters.COMMAND, step_org)],
             TITLE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, step_title)],
-            LOGO:    [MessageHandler(filters.TEXT | filters.PHOTO, step_logo)],
+            # ✅ Fixed: accept TEXT *or* PHOTO *or* document images at the LOGO step
+            LOGO: [
+                MessageHandler(filters.PHOTO, step_logo),
+                MessageHandler(filters.Document.IMAGE, step_logo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, step_logo),
+            ],
             THEME:   [CallbackQueryHandler(step_theme, pattern="^theme_")],
             CONFIRM: [CallbackQueryHandler(step_confirm, pattern="^(gen|restart)$")],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("clear",  clear_command),
+            CommandHandler("help",   help_command),
+        ],
     )
 
-    # ── Add Handlers To App ───────────────────────────────────────────────
     app.add_handler(conv)
+    app.add_handler(CommandHandler("help",  help_command))
+    app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
     print("✅ Bot running!")
-
-    # ── Start Polling ─────────────────────────────────────────────────────
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
