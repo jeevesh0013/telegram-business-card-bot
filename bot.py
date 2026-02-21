@@ -12,7 +12,6 @@ from telegram.constants import ParseMode
 import threading  # Used to run two things at the same time (bot + web server)
 from http.server import BaseHTTPRequestHandler, HTTPServer  # Simple built-in web server
 import os  # To read environment variables like PORT
-
 # ── Config ──────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -167,149 +166,61 @@ def make_card(data):
     card.save(out, "PNG"); out.seek(0)
     return out
 
-# ── /help Command ─────────────────────────────────────────────────────────────
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "💼 *Business Card Bot — Help*\n\n"
-        "This bot generates a beautiful digital business card with a scannable QR code.\n\n"
-        "📋 *Available Commands:*\n"
-        "▫️ /start — Begin creating your business card\n"
-        "▫️ /help  — Show this help message\n"
-        "▫️ /clear — Clear the chat history (bot messages)\n"
-        "▫️ /cancel — Cancel the current card creation process\n\n"
-        "🪄 *How it works:*\n"
-        "1️⃣ Enter your *First Name* and *Last Name*\n"
-        "2️⃣ Provide your *Phone Number* (Indian format)\n"
-        "3️⃣ Enter your *Email Address*\n"
-        "4️⃣ Optionally add your *Organization* and *Job Title*\n"
-        "5️⃣ Upload a *Logo* (optional) or skip\n"
-        "6️⃣ Pick a *Theme* from 6 beautiful options\n"
-        "7️⃣ Confirm details and get your card! ✅\n\n"
-        "🎨 *Available Themes:*\n"
-        "🌊 Ocean | 🌿 Forest | 🔴 Crimson\n"
-        "🌙 Midnight | ✨ Gold | 🌸 Rose\n\n"
-        "📤 *Sharing:*\n"
-        "After your card is generated, use the *Share* button to forward it to contacts or groups!\n\n"
-        "💡 *Tips:*\n"
-        "• Phone must be a valid Indian number (10 digits or +91 format)\n"
-        "• Logo should be a clear image for best results\n"
-        "• Scan the QR code on your card to instantly save the contact!"
-    )
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
-
-# ── /clear Command ────────────────────────────────────────────────────────────
-async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Attempts to delete recent bot messages stored in user_data["sent_messages"].
-    Telegram only allows bots to delete their own messages.
-    Also clears any ongoing conversation state.
-    """
-    chat_id = update.message.chat_id
-    deleted = 0
-
-    # Delete tracked bot messages
-    message_ids = context.user_data.get("sent_messages", [])
-    for msg_id in message_ids:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            deleted += 1
-        except Exception:
-            pass  # Message may already be deleted or too old
-
-    # Also try to delete the /clear command message itself
-    try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
-    except Exception:
-        pass
-
-    # Clear stored message IDs and conversation data
-    context.user_data.clear()
-
-    notice = await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"🧹 Cleared {deleted} bot message(s).\n\nType /start to create a new card.",
-    )
-    # Track this notice too so it can be cleared next time
-    context.user_data.setdefault("sent_messages", []).append(notice.message_id)
-
-
-# ── Helper: track sent messages for /clear ────────────────────────────────────
-async def tracked_reply(update_or_query, context, text, **kwargs):
-    """Send a reply and store the message ID so /clear can delete it later."""
-    if hasattr(update_or_query, "message") and update_or_query.message:
-        msg = await update_or_query.message.reply_text(text, **kwargs)
-    else:
-        msg = await update_or_query.reply_text(text, **kwargs)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
-    return msg
-
-
 # ── Conversation ─────────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    msg = await update.message.reply_text(
-        "💼 *Business Card Bot*\n\nType /cancel anytime or /help for guidance.\n\n✏️ Enter your *First Name*:",
+    await update.message.reply_text(
+        "💼 *Business Card Bot*\n\nType /cancel anytime.\n\n✏️ Enter your *First Name*:",
         parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
     return FIRST
 
 async def step_first(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     if not valid_name(t):
-        msg = await update.message.reply_text("❌ Letters only, 2–40 chars.\nRe-enter *First Name*:", parse_mode=ParseMode.MARKDOWN)
-        context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+        await update.message.reply_text("❌ Letters only, 2–40 chars.\nRe-enter *First Name*:", parse_mode=ParseMode.MARKDOWN)
         return FIRST
     context.user_data["first"] = t
-    msg = await update.message.reply_text("✏️ Enter your *Last Name*:", parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("✏️ Enter your *Last Name*:", parse_mode=ParseMode.MARKDOWN)
     return LAST
 
 async def step_last(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     if not valid_name(t):
-        msg = await update.message.reply_text("❌ Letters only, 2–40 chars.\nRe-enter *Last Name*:", parse_mode=ParseMode.MARKDOWN)
-        context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+        await update.message.reply_text("❌ Letters only, 2–40 chars.\nRe-enter *Last Name*:", parse_mode=ParseMode.MARKDOWN)
         return LAST
     context.user_data["last"] = t
-    msg = await update.message.reply_text("📱 Enter *Phone* (10 digits or +91 format):", parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("📱 Enter *Phone* (10 digits or +91 format):", parse_mode=ParseMode.MARKDOWN)
     return PHONE
 
 async def step_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     if not valid_phone(t):
-        msg = await update.message.reply_text(
+        await update.message.reply_text(
             "❌ Invalid.\nExample: `9876543210` or `+919876543210`\nRe-enter:", parse_mode=ParseMode.MARKDOWN)
-        context.user_data.setdefault("sent_messages", []).append(msg.message_id)
         return PHONE
     context.user_data["phone"] = fmt_phone(t)
-    msg = await update.message.reply_text("📧 Enter your *Email*:", parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("📧 Enter your *Email*:", parse_mode=ParseMode.MARKDOWN)
     return EMAIL
 
 async def step_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     if not valid_email(t):
-        msg = await update.message.reply_text("❌ Invalid email.\nExample: `you@example.com`\nRe-enter:", parse_mode=ParseMode.MARKDOWN)
-        context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+        await update.message.reply_text("❌ Invalid email.\nExample: `you@example.com`\nRe-enter:", parse_mode=ParseMode.MARKDOWN)
         return EMAIL
     context.user_data["email"] = t
-    msg = await update.message.reply_text("🏢 Enter *Organization* (or `skip`):", parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("🏢 Enter *Organization* (or `skip`):", parse_mode=ParseMode.MARKDOWN)
     return ORG
 
 async def step_org(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     context.user_data["org"] = "" if t.lower() == "skip" else t
-    msg = await update.message.reply_text("🎯 Enter *Job Title* (or `skip`):", parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("🎯 Enter *Job Title* (or `skip`):", parse_mode=ParseMode.MARKDOWN)
     return TITLE
 
 async def step_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = update.message.text.strip()
     context.user_data["title"] = "" if t.lower() == "skip" else t
-    msg = await update.message.reply_text("🖼 Upload your *Logo* (photo) or type `skip`:", parse_mode=ParseMode.MARKDOWN)
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("🖼 Upload your *Logo* (photo) or type `skip`:", parse_mode=ParseMode.MARKDOWN)
     return LOGO
 
 async def step_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -320,11 +231,9 @@ async def step_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bio = BytesIO(); await f.download_to_memory(bio); bio.seek(0)
         context.user_data["logo"] = bio
     else:
-        msg = await update.message.reply_text("❌ Please send a photo or type `skip`:", parse_mode=ParseMode.MARKDOWN)
-        context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+        await update.message.reply_text("❌ Please send a photo or type `skip`:", parse_mode=ParseMode.MARKDOWN)
         return LOGO
-    msg = await update.message.reply_text("🎨 Choose a *Theme*:", parse_mode=ParseMode.MARKDOWN, reply_markup=theme_keyboard())
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("🎨 Choose a *Theme*:", parse_mode=ParseMode.MARKDOWN, reply_markup=theme_keyboard())
     return THEME
 
 async def step_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,39 +262,16 @@ async def step_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("🔄 Restarted. Type /start to begin.")
         return ConversationHandler.END
     await q.edit_message_text("⏳ Generating your card...")
-    card_bytes = make_card(context.user_data)
-
-    # ── Share Button ──────────────────────────────────────────────────────────
-    # Telegram's inline share button uses switch_inline_query to forward to another chat.
-    # We also include a "Share via Forward" button as a direct forward prompt.
-    share_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            "📤 Share Card",
-            switch_inline_query="Check out my digital business card! 💼"
-        ),
-    ]])
-
-    sent = await q.message.reply_document(
-        document=card_bytes,
-        caption=(
-            "🎉 *Your Business Card is Ready!*\n\n"
-            "📲 Scan the QR code to instantly save the contact.\n"
-            "📤 Use the *Share Card* button below to send it to others!"
-        ),
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=share_kb,
-    )
-    context.user_data.setdefault("sent_messages", []).append(sent.message_id)
+    card = make_card(context.user_data)
+    await q.message.reply_document(document=card, caption="🎉 Your Business Card!\n\nScan the QR to save contact.")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("❌ Cancelled. Type /start to try again.")
-    context.user_data.setdefault("sent_messages", []).append(msg.message_id)
+    await update.message.reply_text("❌ Cancelled. Type /start to try again.")
     return ConversationHandler.END
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ Unknown command. Use /start to create a card or /help for guidance.")
-
+    await update.message.reply_text("❓ Unknown command. Use /start to create a card.")
 
 # ── Dummy Web Server For Render ────────────────────────────────────────────
 # Render Web Services require an open port.
@@ -409,7 +295,7 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"🌐 Dummy server running on port {port}")
     server.serve_forever()
-
+    
 # ── Run ──────────────────────────────────────────────────────────────────────
 def main():
     # ── Start Dummy Web Server ─────────────────────────────────────────────
@@ -440,8 +326,6 @@ def main():
 
     # ── Add Handlers To App ───────────────────────────────────────────────
     app.add_handler(conv)
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
     print("✅ Bot running!")
